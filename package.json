@@ -1,20 +1,17 @@
 {
   "name": "mb-proxy",
-  "version": "1.0.0",
-  "private": true,
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "check": "tsc --noEmit",
-    "test": "vitest run"
+    "deploy": "wrangler deploy --minify",
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings"
+  },
+  "dependencies": {
+    "hono": "^4.12.23"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "latest",
-    "@cloudflare/workers-types": "latest",
-    "typescript": "latest",
-    "vitest": "latest",
-    "wrangler": "latest"
-  },
-  "packageManager": "pnpm@11.5.0"
+    "@cloudflare/workers-types": "^4.20260530.1",
+    "typescript": "^6.0.3",
+    "wrangler": "^4.95.0"
+  }
 }
