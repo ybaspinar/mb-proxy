@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "mb-proxy",
+  "main": "dist/index.js",
+  "compatibility_date": "2026-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "head_sampling_rate": 1
+    }
+  },
+  "kv_namespaces": [
+    {
+      "binding": "MB_CACHE",
+      "id": "REPLACE_WITH_YOUR_KV_ID"
+    }
+  ]
+}

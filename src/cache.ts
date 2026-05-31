@@ -7,7 +7,7 @@ const TTL_TRACKLIST = 60 * 60 * 24 * 14; // 14 days for tracklists
 const TTL_COVER = 60 * 60 * 24 * 30; // 30 days for cover art lookups
 
 function buildKey(...parts: string[]): string {
-  return parts.join(":");
+  return parts.map((p) => p.replace(/[:*]/g, "_")).join(":");
 }
 
 function now(): number {
@@ -21,7 +21,6 @@ export async function cacheGet<T>(env: WorkerEnv, key: string): Promise<T | null
   try {
     const entry = JSON.parse(raw) as CacheEntry<T>;
     if (entry.expiresAt < now()) {
-      // Don't await — fire and forget deletion
       void env.MB_CACHE.delete(key);
       return null;
     }
@@ -48,7 +47,7 @@ export async function cachePut<T>(
 }
 
 export const CacheKeys = {
-  search: (query: string) => buildKey("search", query.toLowerCase().trim()),
+  search: (query: string) => buildKey("search", query),
   release: (id: string) => buildKey("release", id),
   tracklist: (id: string) => buildKey("tracklist", id),
   cover: (id: string) => buildKey("cover", id),

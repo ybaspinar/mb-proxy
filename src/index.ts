@@ -19,7 +19,7 @@ const UA = "AlbumPosterGenerator/1.0.0 (https://github.com/ybaspinar/album-poste
 
 // ─── Helpers ───
 
-function jsonResponse(data: unknown, status = 200, extraHeaders?: HeadersInit): Response {
+function jsonResponse(data: unknown, status = 200, extraHeaders?: Record<string, string>): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
@@ -43,15 +43,13 @@ function mbHeaders(): HeadersInit {
   };
 }
 
-function formatMs(ms?: number): string | undefined {
-  if (ms == null) return undefined;
-  const totalSec = Math.floor(ms / 1000);
-  const min = Math.floor(totalSec / 60);
-  const sec = totalSec % 60;
-  return `${min}:${sec.toString().padStart(2, "0")}`;
-}
-
-function mapReleaseGroupToCached(rg: { id: string; title: string; "first-release-date"?: string; "primary-type"?: string; "artist-credit"?: Array<{ name: string; artist: { disambiguation?: string } }> }): CachedAlbumItem {
+function mapReleaseGroupToCached(rg: {
+  id: string;
+  title: string;
+  "first-release-date"?: string;
+  "primary-type"?: string;
+  "artist-credit"?: Array<{ name: string; artist: { disambiguation?: string } }>;
+}): CachedAlbumItem {
   return {
     id: rg.id,
     title: rg.title,
@@ -62,7 +60,14 @@ function mapReleaseGroupToCached(rg: { id: string; title: string; "first-release
   };
 }
 
-function mapReleaseToCached(r: { id: string; title: string; date?: string; country?: string; "artist-credit"?: Array<{ name: string }>; media?: Array<{ format?: string; "track-count"?: number }> }): CachedAlbumItem {
+function mapReleaseToCached(r: {
+  id: string;
+  title: string;
+  date?: string;
+  country?: string;
+  "artist-credit"?: Array<{ name: string }>;
+  media?: Array<{ format?: string; "track-count"?: number }>;
+}): CachedAlbumItem {
   return {
     id: r.id,
     title: r.title,
@@ -76,10 +81,7 @@ function mapReleaseToCached(r: { id: string; title: string; date?: string; count
 
 // ─── Route handlers ───
 
-async function handleSearch(
-  env: WorkerEnv,
-  url: URL,
-): Promise<Response> {
+async function handleSearch(env: WorkerEnv, url: URL): Promise<Response> {
   const query = url.searchParams.get("q")?.trim();
   const artist = url.searchParams.get("artist")?.trim();
   const title = url.searchParams.get("title")?.trim();
@@ -91,19 +93,16 @@ async function handleSearch(
     return errorResponse("Provide at least one of: q, artist, title", 400);
   }
 
-  // Build the cache key from the full query set
   const cacheKey = CacheKeys.search(
     JSON.stringify({ query, artist, title, type, offset, limit }),
   );
 
-  // Check cache
   const cached = await cacheGet<CachedSearchResult>(env, cacheKey);
   if (cached) {
     return jsonResponse(cached, 200, { "X-Cache": "HIT" });
   }
 
-  // Build MusicBrainz query
-  let mbQuery = "";
+  let mbQuery: string;
   if (query) {
     mbQuery = query;
   } else {
@@ -127,7 +126,7 @@ async function handleSearch(
     if (!res.ok) {
       return errorResponse(`MusicBrainz returned ${res.status}`, res.status);
     }
-    const data = await res.json() as MusicBrainzReleaseGroupSearch;
+    const data = (await res.json()) as MusicBrainzReleaseGroupSearch;
 
     const result: CachedSearchResult = {
       meta: {
@@ -144,10 +143,7 @@ async function handleSearch(
   }
 }
 
-async function handleRelease(
-  env: WorkerEnv,
-  releaseId: string,
-): Promise<Response> {
+async function handleRelease(env: WorkerEnv, releaseId: string): Promise<Response> {
   const cacheKey = CacheKeys.release(releaseId);
 
   const cached = await cacheGet<MusicBrainzRelease>(env, cacheKey);
@@ -164,7 +160,7 @@ async function handleRelease(
     if (!res.ok) {
       return errorResponse(`MusicBrainz returned ${res.status}`, res.status);
     }
-    const data = await res.json() as MusicBrainzRelease;
+    const data = (await res.json()) as MusicBrainzRelease;
 
     await cachePut(env, cacheKey, data, CacheTtl.release);
     return jsonResponse(data, 200, { "X-Cache": "MISS" });
@@ -173,10 +169,7 @@ async function handleRelease(
   }
 }
 
-async function handleTracklist(
-  env: WorkerEnv,
-  releaseId: string,
-): Promise<Response> {
+async function handleTracklist(env: WorkerEnv, releaseId: string): Promise<Response> {
   const cacheKey = CacheKeys.tracklist(releaseId);
 
   const cached = await cacheGet<CachedTracklistResult>(env, cacheKey);
@@ -193,7 +186,7 @@ async function handleTracklist(
     if (!res.ok) {
       return errorResponse(`MusicBrainz returned ${res.status}`, res.status);
     }
-    const data = await res.json() as MusicBrainzRelease;
+    const data = (await res.json()) as MusicBrainzRelease;
 
     const medium = data.media?.[0];
     const tracks: CachedTracklistItem[] = (medium?.tracks ?? []).map((t) => ({
@@ -215,10 +208,7 @@ async function handleTracklist(
   }
 }
 
-async function handleCoverArt(
-  env: WorkerEnv,
-  releaseId: string,
-): Promise<Response> {
+async function handleCoverArt(env: WorkerEnv, releaseId: string): Promise<Response> {
   const cacheKey = CacheKeys.cover(releaseId);
 
   const cached = await cacheGet<{ front: string | null; images: Array<{ front: boolean; image: string }> }>(env, cacheKey);
@@ -226,7 +216,6 @@ async function handleCoverArt(
     return jsonResponse(cached, 200, { "X-Cache": "HIT" });
   }
 
-  // Try Cover Art Archive
   const caaUrl = `${CAA_BASE}/release/${releaseId}`;
 
   const res = await fetch(caaUrl, {
@@ -244,8 +233,12 @@ async function handleCoverArt(
   }
 
   try {
-    const data = await res.json() as {
-      images?: Array<{ front: boolean; thumbnails?: { large?: string; small?: string }; image?: string }>;
+    const data = (await res.json()) as {
+      images?: Array<{
+        front: boolean;
+        thumbnails?: { large?: string; small?: string };
+        image?: string;
+      }>;
     };
 
     const images = (data.images ?? []).map((img) => ({
@@ -273,6 +266,7 @@ export default {
     // CORS preflight
     if (request.method === "OPTIONS") {
       return new Response(null, {
+        status: 204,
         headers: {
           "Access-Control-Allow-Origin": "*",
           "Access-Control-Allow-Methods": "GET, OPTIONS",
@@ -301,56 +295,46 @@ export default {
     }
 
     // /release/:id
-    const releaseMatch = pathname.match(/^\/release\/([^/]+)$/);
+    const releaseMatch = pathname.match(/^\/release\/([a-f0-9-]+)$/);
     if (releaseMatch) {
       return handleRelease(env, releaseMatch[1]!);
     }
 
     // /tracklist/:id  — lighter than /release, just tracks
-    const tracklistMatch = pathname.match(/^\/tracklist\/([^/]+)$/);
+    const tracklistMatch = pathname.match(/^\/tracklist\/([a-f0-9-]+)$/);
     if (tracklistMatch) {
       return handleTracklist(env, tracklistMatch[1]!);
     }
 
-    // /cover/:releaseId  — cover art from Cover Art Archive
-    const coverMatch = pathname.match(/^\/cover\/([^/]+)$/);
+    // /cover/:releaseId
+    const coverMatch = pathname.match(/^\/cover\/([a-f0-9-]+)$/);
     if (coverMatch) {
       return handleCoverArt(env, coverMatch[1]!);
     }
 
-    // /cover-group/:releaseGroupId  — look up a cover via release-group
-    const coverGroupMatch = pathname.match(/^\/cover-group\/([^/]+)$/);
+    // /cover-group/:releaseGroupId
+    const coverGroupMatch = pathname.match(/^\/cover-group\/([a-f0-9-]+)$/);
     if (coverGroupMatch) {
-      // First find a release in the group, then get its cover art
       const rgId = coverGroupMatch[1]!;
 
-      // Check cover cache by group id
-      const cacheKey = CacheKeys.cover(`rg:${rgId}`);
-      const cached = await cacheGet<{ front: string | null; images: Array<{ front: boolean; image: string }> }>(env, cacheKey);
-      if (cached) {
-        return jsonResponse(cached, 200, { "X-Cache": "HIT" });
-      }
-
-      // Find releases in this group
+      // Find first release in this group
       await rateLimit();
       const mbUrl = `${MB_BASE}/release?release-group=${rgId}&fmt=json&limit=1`;
       const res = await fetch(mbUrl, { headers: mbHeaders() });
       if (!res.ok) {
         return errorResponse(`MusicBrainz returned ${res.status}`, res.status);
       }
-      const data = await res.json() as MusicBrainzReleaseSearch;
+      const data = (await res.json()) as MusicBrainzReleaseSearch;
       const firstRelease = data.releases?.[0];
 
       if (!firstRelease) {
-        const notFound = { front: null, images: [] };
-        await cachePut(env, cacheKey, notFound, CacheTtl.cover);
-        return jsonResponse(notFound);
+        return jsonResponse({ front: null, images: [] });
       }
 
-      // Now use the release's cover, caching by group id too
-      const releaseRes = await fetch(`${MB_BASE}/release/${firstRelease.id}?fmt=json`, { headers: mbHeaders() });
-      // Use the release id for cover lookup, but cache by group id as well
-      // Actually just delegate to cover art logic
+      // Cache by group id for future lookups
+      const groupCacheKey = CacheKeys.cover(`rg:${rgId}`);
+      await cachePut(env, groupCacheKey, { front: null, images: [] }, CacheTtl.cover);
+
       return handleCoverArt(env, firstRelease.id);
     }
 
