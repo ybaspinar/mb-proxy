@@ -72,6 +72,22 @@ describe("mb-proxy cache headers", () => {
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe("https://ybaspinar.dev");
   });
 
+  it("allows ybaspinar.dev subdomains by default", async () => {
+    const kv = new MemoryKV();
+    const cached: AlbumSearchResult[] = [];
+    const key = buildCacheKey(["v2", "search", "radiohead", "ok computer", "", ""]);
+    await kv.put(key, JSON.stringify(cached));
+
+    const response = await app.request(
+      "/search?artist=Radiohead&album=OK%20Computer",
+      { headers: { Origin: "https://www.ybaspinar.dev" } },
+      createEnvWithoutAllowedOrigins(kv),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("https://www.ybaspinar.dev");
+  });
+
   it("rejects API requests from other origins", async () => {
     const response = await app.request(
       "/search?artist=Radiohead&album=OK%20Computer",

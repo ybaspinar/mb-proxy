@@ -15,7 +15,7 @@ export interface Env extends MusicBrainzConfigEnv {
 const SEARCH_LIMIT = 12;
 const EDITIONS_LIMIT = 25;
 const CACHE_CONTROL = "public, max-age=86400, stale-while-revalidate=604800";
-const DEFAULT_ALLOWED_ORIGINS = "https://ybaspinar.dev";
+const DEFAULT_ALLOWED_ORIGIN_DOMAIN = "ybaspinar.dev";
 
 const app = new Hono<{ Bindings: Env }>();
 app.use("*", async (c, next) => {
@@ -221,11 +221,24 @@ function musicBrainzConfigFromEnv(env: Env): MusicBrainzConfigEnv {
 
 function isAllowedOrigin(env: Env, origin: string | undefined): origin is string {
   if (!origin) return false;
-  const allowedOrigins = (env.ALLOWED_ORIGINS ?? DEFAULT_ALLOWED_ORIGINS).split(",");
-  for (const allowedOrigin of allowedOrigins) {
+  const configuredOrigins = env.ALLOWED_ORIGINS;
+  if (!configuredOrigins) return isOriginInDefaultDomain(origin);
+
+  for (const allowedOrigin of configuredOrigins.split(",")) {
     if (origin === allowedOrigin.trim()) return true;
   }
   return false;
+}
+
+function isOriginInDefaultDomain(origin: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:") return false;
+  return url.hostname === DEFAULT_ALLOWED_ORIGIN_DOMAIN || url.hostname.endsWith(`.${DEFAULT_ALLOWED_ORIGIN_DOMAIN}`);
 }
 
 function corsHeaders(origin: string): Record<string, string> {
