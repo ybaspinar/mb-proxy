@@ -29,6 +29,7 @@ For local development, create `.dev.vars`:
 MB_APP_NAME=your-app-name
 MB_APP_VERSION=0.1.0
 MB_APP_CONTACT=https://github.com/your-user/your-repo
+ALLOWED_ORIGINS=https://ybaspinar.dev
 ```
 
 For deployment, either add your own `vars` block to `wrangler.jsonc` in your fork:
@@ -37,11 +38,14 @@ For deployment, either add your own `vars` block to `wrangler.jsonc` in your for
 "vars": {
   "MB_APP_NAME": "your-app-name",
   "MB_APP_VERSION": "0.1.0",
-  "MB_APP_CONTACT": "https://github.com/your-user/your-repo"
+  "MB_APP_CONTACT": "https://github.com/your-user/your-repo",
+  "ALLOWED_ORIGINS": "https://ybaspinar.dev"
 }
 ```
 
 or set equivalent Worker variables in the Cloudflare dashboard. `pnpm run deploy` uses `wrangler deploy --keep-vars` so dashboard-managed variables are preserved. Do not use someone else's contact URL for a public fork.
+
+`ALLOWED_ORIGINS` is a comma-separated exact Origin allowlist. If unset, the Worker defaults to `https://ybaspinar.dev`.
 
 ```txt
 pnpm run cf-typegen

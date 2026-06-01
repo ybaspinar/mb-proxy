@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { cors } from "hono/cors";
 import { CoverArtArchiveApi } from "musicbrainz-api";
 import { createCache, buildCacheKey, TTL, type CacheStatus } from "./cache";
 import { MbRateLimiter } from "./rate-limiter";
@@ -10,15 +9,33 @@ import type { MusicBrainzConfigEnv, MusicBrainzOperation } from "./musicbrainz-c
 export interface Env extends MusicBrainzConfigEnv {
   MB_CACHE: KVNamespace;
   MB_RATE_LIMITER: DurableObjectNamespace;
+  ALLOWED_ORIGINS?: string;
 }
 
 const SEARCH_LIMIT = 12;
 const EDITIONS_LIMIT = 25;
 const CACHE_CONTROL = "public, max-age=86400, stale-while-revalidate=604800";
+const DEFAULT_ALLOWED_ORIGINS = "https://ybaspinar.dev";
 
 const app = new Hono<{ Bindings: Env }>();
+app.use("*", async (c, next) => {
+  const origin = c.req.header("Origin");
+  if (!isAllowedOrigin(c.env, origin)) {
+    return c.json({ error: "Forbidden origin" }, 403);
+  }
 
-app.use("*", cors());
+  if (c.req.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders(origin),
+    });
+  }
+
+  await next();
+  for (const [key, value] of Object.entries(corsHeaders(origin))) {
+    c.res.headers.set(key, value);
+  }
+});
 
 app.get("/", (c) => {
   return c.json({ ok: true, service: "mb-proxy", version: "0.2.0" });
@@ -199,6 +216,24 @@ function musicBrainzConfigFromEnv(env: Env): MusicBrainzConfigEnv {
     MB_APP_NAME: env.MB_APP_NAME,
     MB_APP_VERSION: env.MB_APP_VERSION,
     MB_APP_CONTACT: env.MB_APP_CONTACT,
+  };
+}
+
+function isAllowedOrigin(env: Env, origin: string | undefined): origin is string {
+  if (!origin) return false;
+  const allowedOrigins = (env.ALLOWED_ORIGINS ?? DEFAULT_ALLOWED_ORIGINS).split(",");
+  for (const allowedOrigin of allowedOrigins) {
+    if (origin === allowedOrigin.trim()) return true;
+  }
+  return false;
+}
+
+function corsHeaders(origin: string): Record<string, string> {
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Vary": "Origin",
   };
 }
 

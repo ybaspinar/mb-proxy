@@ -4,6 +4,8 @@ Cached proxy for MusicBrainz + Cover Art Archive, deployed as a Cloudflare Worke
 
 Forks must define their own `MB_APP_NAME`, `MB_APP_VERSION`, and `MB_APP_CONTACT` before deployment so MusicBrainz receives a deployer-specific User-Agent. This repository intentionally does not ship default values for those fields.
 
+API responses are only served to requests with an allowed `Origin`. By default this is `https://ybaspinar.dev`; set `ALLOWED_ORIGINS` to override it with a comma-separated exact Origin allowlist.
+
 ## Base URL
 
 ```
