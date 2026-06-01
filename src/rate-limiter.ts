@@ -1,3 +1,10 @@
+import {
+  isMusicBrainzOperation,
+  runMusicBrainzOperation,
+  type MusicBrainzConfigEnv,
+  type MusicBrainzOperation,
+} from "./musicbrainz-client";
+
 /**
  * Durable Object that acts as a global rate limiter for MusicBrainz API calls.
  *
@@ -9,76 +16,97 @@
 
 const MIN_INTERVAL_MS = 1100;
 const DEFAULT_TIMEOUT_MS = 15000;
-const MB_BASE = "https://musicbrainz.org/ws/2";
+
+interface RateLimiterRequest {
+  operation: MusicBrainzOperation;
+  timeoutMs?: number;
+  config?: MusicBrainzConfigEnv;
+}
+
+interface QueuedTask {
+  key: string;
+  operation: MusicBrainzOperation;
+  timeoutMs: number;
+  config: MusicBrainzConfigEnv | undefined;
+  resolve: (response: Response) => void;
+  reject: (reason: unknown) => void;
+}
 
 export class MbRateLimiter {
   private lastRun = 0;
-  private queue: Array<{
-    url: string;
-    timeoutMs: number;
-    resolve: (response: Response) => void;
-    reject: (reason: unknown) => void;
-  }> = [];
+  private queue: QueuedTask[] = [];
+  private inFlight = new Map<string, Promise<Response>>();
   private processing = false;
 
-  constructor(private state: DurableObjectState) {}
-
   async fetch(request: Request): Promise<Response> {
-    const { url, timeoutMs = DEFAULT_TIMEOUT_MS } = (await request.json()) as {
-      url: string;
-      timeoutMs?: number;
-    };
-
-    // Validate URL is MusicBrainz or Cover Art Archive
-    if (!url.startsWith(MB_BASE) && !url.startsWith("https://coverartarchive.org")) {
-      return Response.json({ error: "Invalid upstream URL" }, { status: 400 });
+    const payload = (await request.json()) as Partial<RateLimiterRequest>;
+    if (!isMusicBrainzOperation(payload.operation)) {
+      return Response.json({ error: "Invalid MusicBrainz operation" }, { status: 400 });
     }
 
-    return new Promise<Response>((resolve, reject) => {
-      this.queue.push({ url, timeoutMs, resolve, reject });
-      this.process();
-    });
+    const timeoutMs = payload.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const key = JSON.stringify(payload.operation);
+    let inFlight = this.inFlight.get(key);
+
+    if (!inFlight) {
+      const { promise, resolve, reject } = Promise.withResolvers<Response>();
+      inFlight = promise.finally(() => {
+        this.inFlight.delete(key);
+      });
+      this.inFlight.set(key, inFlight);
+      this.queue.push({ key, operation: payload.operation, timeoutMs, config: payload.config, resolve, reject });
+      void this.process();
+    }
+
+    const response = await inFlight;
+    return response.clone();
   }
 
   private async process(): Promise<void> {
     if (this.processing) return;
     this.processing = true;
 
-    while (this.queue.length > 0) {
-      const task = this.queue.shift()!;
+    try {
+      while (this.queue.length > 0) {
+        const task = this.queue.shift();
+        if (!task) continue;
 
-      // Enforce rate limit
-      const now = Date.now();
-      const elapsed = now - this.lastRun;
-      const delay = MIN_INTERVAL_MS - elapsed;
-      if (delay > 0) {
-        await sleep(delay);
+        const now = Date.now();
+        const elapsed = now - this.lastRun;
+        const delay = MIN_INTERVAL_MS - elapsed;
+        if (delay > 0) {
+          await sleep(delay);
+        }
+        this.lastRun = Date.now();
+
+        try {
+          const data = await withTimeout(runMusicBrainzOperation(task.operation, undefined, task.config), task.timeoutMs);
+          task.resolve(Response.json(data));
+        } catch (err) {
+          task.reject(err);
+        }
       }
-      this.lastRun = Date.now();
-
-      try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), task.timeoutMs);
-
-        const res = await fetch(task.url, {
-          headers: {
-            Accept: "application/json",
-            "User-Agent": "album-poster-generator/0.2.0 (https://github.com/ybaspinar/mb-proxy)",
-          },
-          signal: controller.signal,
-        });
-
-        clearTimeout(timer);
-        task.resolve(res);
-      } catch (err) {
-        task.reject(err);
-      }
+    } finally {
+      this.processing = false;
     }
-
-    this.processing = false;
   }
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  const { promise, resolve } = Promise.withResolvers<void>();
+  setTimeout(resolve, ms);
+  return promise;
+}
+
+async function withTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
+  const timeout = Promise.withResolvers<never>();
+  const timer = setTimeout(() => {
+    timeout.reject(new DOMException("MusicBrainz operation timed out", "TimeoutError"));
+  }, timeoutMs);
+
+  try {
+    return await Promise.race([operation, timeout.promise]);
+  } finally {
+    clearTimeout(timer);
+  }
 }

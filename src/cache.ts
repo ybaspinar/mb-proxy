@@ -5,6 +5,13 @@ export interface CacheConfig {
   defaultTtl?: number;
 }
 
+export type CacheStatus = "HIT" | "MISS";
+
+export interface CachedResult<T> {
+  data: T;
+  status: CacheStatus;
+}
+
 // TTLs in seconds — MusicBrainz data changes rarely
 export const TTL = {
   SEARCH: 60 * 60 * 24 * 7,          // 7 days
@@ -62,11 +69,19 @@ export function createCache(config: CacheConfig) {
       fetcher: () => Promise<T>,
       ttl?: number,
     ): Promise<T> {
+      return (await this.cachedWithStatus(key, fetcher, ttl)).data;
+    },
+
+    async cachedWithStatus<T>(
+      key: string,
+      fetcher: () => Promise<T>,
+      ttl?: number,
+    ): Promise<CachedResult<T>> {
       const hit = await this.get<T>(key);
-      if (hit) return hit;
+      if (hit !== null) return { data: hit, status: "HIT" };
       const data = await fetcher();
       await this.put(key, data, ttl);
-      return data;
+      return { data, status: "MISS" };
     },
   };
 }

@@ -1,20 +1,20 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { createCache, buildCacheKey, TTL } from "./cache";
+import { CoverArtArchiveApi } from "musicbrainz-api";
+import { createCache, buildCacheKey, TTL, type CacheStatus } from "./cache";
 import { MbRateLimiter } from "./rate-limiter";
 import type { AlbumSearchResult, AlbumEdition } from "./types";
-import type { IReleaseGroupList, IRelease, ICoversInfo } from "musicbrainz-api";
+import type { IBrowseReleasesResult, ICoversInfo, IRelease, IReleaseGroupList } from "musicbrainz-api";
+import type { MusicBrainzConfigEnv, MusicBrainzOperation } from "./musicbrainz-client";
 
-export interface Env {
+export interface Env extends MusicBrainzConfigEnv {
   MB_CACHE: KVNamespace;
   MB_RATE_LIMITER: DurableObjectNamespace;
-  MB_USER_AGENT?: string;
 }
 
-const MB_BASE = "https://musicbrainz.org/ws/2";
-const CAA_BASE = "https://coverartarchive.org";
 const SEARCH_LIMIT = 12;
 const EDITIONS_LIMIT = 25;
+const CACHE_CONTROL = "public, max-age=86400, stale-while-revalidate=604800";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -38,21 +38,20 @@ app.get("/search", async (c) => {
   const cache = createCache({ kv: c.env.MB_CACHE });
   const cacheKey = buildCacheKey(["v2", "search", normalize(artist), normalize(album), year, normalize(type)]);
 
-  const data = await cache.cached<AlbumSearchResult[]>(
+  const result = await cache.cachedWithStatus<AlbumSearchResult[]>(
     cacheKey,
     async () => {
       const query = buildSearchQuery({ artist, album, year, type });
-      const url = `${MB_BASE}/release-group?query=${encodeURIComponent(query)}&fmt=json&limit=${SEARCH_LIMIT}`;
-
-      const res = await fetchWithRateLimit(c.env, url);
-      if (!res.ok) throw new Error(`MusicBrainz error: ${res.status}`);
-
-      const mbData = (await res.json()) as IReleaseGroupList;
+      const mbData = await fetchWithRateLimit<IReleaseGroupList>(c.env, {
+        kind: "searchReleaseGroups",
+        query,
+        limit: SEARCH_LIMIT,
+      });
 
       return mbData["release-groups"]?.map((g) => ({
         id: g.id,
         title: g.title,
-        artist: (g["artist-credit"] ?? [] as Array<{ name: string }>).map((ac) => ac.name).join(" & "),
+        artist: (g["artist-credit"] ?? []).map((ac) => ac.name).join(" & "),
         releaseDate: g["first-release-date"] ?? "",
         primaryType: g["primary-type"] ?? "",
       })) ?? [];
@@ -60,7 +59,7 @@ app.get("/search", async (c) => {
     TTL.SEARCH,
   );
 
-  return c.json(data);
+  return jsonWithCache(c, result.data, result.status);
 });
 
 // GET /release-group/:id/editions
@@ -71,20 +70,20 @@ app.get("/release-group/:id/editions", async (c) => {
   const cache = createCache({ kv: c.env.MB_CACHE });
   const cacheKey = buildCacheKey(["v2", "editions", id]);
 
-  const data = await cache.cached<AlbumEdition[]>(
+  const result = await cache.cachedWithStatus<AlbumEdition[]>(
     cacheKey,
     async () => {
-      const url = `${MB_BASE}/release?release-group=${encodeURIComponent(id)}&inc=media&format=json&limit=${EDITIONS_LIMIT}`;
-      const res = await fetchWithRateLimit(c.env, url);
-      if (!res.ok) throw new Error(`MusicBrainz error: ${res.status}`);
-
-      const mbData = (await res.json()) as { releases?: IRelease[] };
+      const mbData = await fetchWithRateLimit<IBrowseReleasesResult>(c.env, {
+        kind: "browseReleaseGroupEditions",
+        releaseGroupId: id,
+        limit: EDITIONS_LIMIT,
+      });
 
       return mbData.releases?.filter((r): r is IRelease & { id: string; title: string } => !!r.id && !!r.title)
         .map((r) => {
           const media = r.media ?? [];
-          const formats = [...new Set(media.map((m: { format?: string }) => m.format?.trim()).filter(Boolean) as string[])];
-          const trackCount = media.reduce((s: number, m: { "track-count"?: number }) => s + (m["track-count"] ?? 0), 0);
+          const formats = [...new Set(media.map((m) => m.format?.trim()).filter((format): format is string => !!format))];
+          const trackCount = media.reduce((sum, medium) => sum + (medium["track-count"] ?? 0), 0);
           return {
             id: r.id,
             title: r.title,
@@ -98,7 +97,7 @@ app.get("/release-group/:id/editions", async (c) => {
     TTL.RELEASE,
   );
 
-  return c.json(data);
+  return jsonWithCache(c, result.data, result.status);
 });
 
 // GET /release/:id/tracklist
@@ -109,25 +108,22 @@ app.get("/release/:id/tracklist", async (c) => {
   const cache = createCache({ kv: c.env.MB_CACHE });
   const cacheKey = buildCacheKey(["v2", "tracklist", id]);
 
-  const data = await cache.cached<string[]>(
+  const result = await cache.cachedWithStatus<string[]>(
     cacheKey,
     async () => {
-      const url = `${MB_BASE}/release/${encodeURIComponent(id)}?inc=recordings&fmt=json`;
-      const res = await fetchWithRateLimit(c.env, url);
-      if (!res.ok) throw new Error(`MusicBrainz error: ${res.status}`);
-
-      const mbData = (await res.json()) as {
-        media?: Array<{ tracks?: Array<{ title?: string }> }>;
-      };
+      const mbData = await fetchWithRateLimit<IRelease>(c.env, {
+        kind: "lookupReleaseTracklist",
+        releaseId: id,
+      });
 
       return mbData.media?.flatMap((medium) =>
-        medium.tracks?.map((t) => t.title?.replace(/\s+/g, " ").trim()).filter((t): t is string => !!t) ?? []
+        medium.tracks?.map((track) => track.title?.replace(/\s+/g, " ").trim()).filter((title): title is string => !!title) ?? []
       ) ?? [];
     },
     TTL.TRACKLIST,
   );
 
-  return c.json(data);
+  return jsonWithCache(c, result.data, result.status);
 });
 
 // GET /release/:id/cover
@@ -154,21 +150,20 @@ async function handleCover(
   const cache = createCache({ kv: c.env.MB_CACHE });
   const cacheKey = buildCacheKey(["v2", "cover", type, id]);
 
-  const data = await cache.cached<{
+  const result = await cache.cachedWithStatus<{
     artworkUrl: string;
     thumbnails: { large?: string; small?: string };
   }>(
     cacheKey,
     async () => {
-      const url = `${CAA_BASE}/${type}/${encodeURIComponent(id)}`;
-      const res = await fetch(url, { headers: { Accept: "application/json" } });
+      const caa = new CoverArtArchiveApi();
+      const caaData = type === "release"
+        ? await caa.getReleaseCovers(id)
+        : await caa.getReleaseGroupCovers(id);
 
-      if (res.status === 404) return { artworkUrl: "", thumbnails: {} };
-      if (!res.ok) throw new Error(`Cover Art Archive error: ${res.status}`);
+      if (!hasCoverImages(caaData)) return { artworkUrl: "", thumbnails: {} };
 
-      const caaData = (await res.json()) as ICoversInfo;
-      const images = caaData.images ?? [];
-      const front = images.find((img: { front: boolean }) => img.front) ?? images[0];
+      const front = caaData.images.find((img) => img.front) ?? caaData.images[0];
 
       return {
         artworkUrl: front?.image ?? "",
@@ -181,19 +176,41 @@ async function handleCover(
     TTL.COVER_ART,
   );
 
-  return c.json(data);
+  return jsonWithCache(c, result.data, result.status);
 }
 
 // ── Helpers ───────────────────────────────────────────────────
 
-async function fetchWithRateLimit(env: Env, url: string, timeoutMs = 15000): Promise<Response> {
+async function fetchWithRateLimit<T>(env: Env, operation: MusicBrainzOperation, timeoutMs = 15000): Promise<T> {
   const id = env.MB_RATE_LIMITER.idFromName("global");
   const stub = env.MB_RATE_LIMITER.get(id);
-  return stub.fetch("http://rate-limiter/fetch", {
+  const response = await stub.fetch("http://rate-limiter/fetch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url, timeoutMs }),
+    body: JSON.stringify({ operation, timeoutMs, config: musicBrainzConfigFromEnv(env) }),
   });
+
+  if (!response.ok) throw new Error(`MusicBrainz error: ${response.status}`);
+  return response.json() as Promise<T>;
+}
+
+function musicBrainzConfigFromEnv(env: Env): MusicBrainzConfigEnv {
+  return {
+    MB_APP_NAME: env.MB_APP_NAME,
+    MB_APP_VERSION: env.MB_APP_VERSION,
+    MB_APP_CONTACT: env.MB_APP_CONTACT,
+  };
+}
+
+function jsonWithCache(
+  c: { json: (data: unknown) => Response },
+  data: unknown,
+  status: CacheStatus,
+): Response {
+  const response = c.json(data);
+  response.headers.set("X-Cache", status);
+  response.headers.set("Cache-Control", CACHE_CONTROL);
+  return response;
 }
 
 function buildSearchQuery(params: { artist: string; album: string; year: string; type: string }): string {
@@ -212,6 +229,10 @@ function normalize(input: string): string {
 function capitalize(input: string): string {
   if (!input) return "";
   return input.charAt(0).toUpperCase() + input.slice(1);
+}
+
+function hasCoverImages(value: unknown): value is ICoversInfo {
+  return typeof value === "object" && value !== null && Array.isArray((value as { images?: unknown }).images);
 }
 
 export { MbRateLimiter };

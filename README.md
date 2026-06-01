@@ -1,21 +1,62 @@
-```txt
-npm install
-npm run dev
-```
+# mb-proxy
+
+Cloudflare Worker proxy for MusicBrainz + Cover Art Archive with KV caching and Durable Object rate limiting.
+
+## Fork and deploy
 
 ```txt
-npm run deploy
+pnpm install
+pnpm exec wrangler login
+pnpm exec wrangler kv namespace create MB_CACHE
 ```
 
-[For generating/synchronizing types based on your Worker configuration run](https://developers.cloudflare.com/workers/wrangler/commands/#types):
+Wrangler can deploy with the KV binding name only, but if your account requires an explicit namespace ID, copy the created namespace ID into `wrangler.jsonc`:
+
+```jsonc
+"kv_namespaces": [
+  {
+    "binding": "MB_CACHE",
+    "id": "<your-kv-namespace-id>"
+  }
+]
+```
+
+Then define your own MusicBrainz app identity before deploying. This repository intentionally does not ship defaults because MusicBrainz expects a meaningful deployer-specific User-Agent.
+
+For local development, create `.dev.vars`:
 
 ```txt
-npm run cf-typegen
+MB_APP_NAME=your-app-name
+MB_APP_VERSION=0.1.0
+MB_APP_CONTACT=https://github.com/your-user/your-repo
 ```
 
-Pass the `CloudflareBindings` as generics when instantiating `Hono`:
+For deployment, either add your own `vars` block to `wrangler.jsonc` in your fork:
 
-```ts
-// src/index.ts
-const app = new Hono<{ Bindings: CloudflareBindings }>()
+```jsonc
+"vars": {
+  "MB_APP_NAME": "your-app-name",
+  "MB_APP_VERSION": "0.1.0",
+  "MB_APP_CONTACT": "https://github.com/your-user/your-repo"
+}
 ```
+
+or set equivalent Worker variables in the Cloudflare dashboard. Do not use someone else's contact URL for a public fork.
+
+```txt
+pnpm run cf-typegen
+pnpm test
+pnpm exec tsc --noEmit --noUnusedLocals
+pnpm exec wrangler deploy --dry-run
+pnpm run deploy
+```
+
+## Local development
+
+```txt
+pnpm run dev
+```
+
+## API
+
+See [`API.md`](./API.md).

@@ -10,8 +10,7 @@
   },
   "kv_namespaces": [
     {
-      "binding": "MB_CACHE",
-      "id": "b76d00e6ada8484db5f2fbb5b228351f"
+      "binding": "MB_CACHE"
     }
   ],
   "durable_objects": {

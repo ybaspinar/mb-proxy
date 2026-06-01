@@ -1,6 +1,8 @@
 # mb-proxy API Reference
 
-Cached proxy for MusicBrainz + Cover Art Archive, deployed as a Cloudflare Worker with KV caching and Durable Object rate limiting.
+Cached proxy for MusicBrainz + Cover Art Archive, deployed as a Cloudflare Worker with KV caching, `musicbrainz-api` client calls, and Durable Object rate limiting.
+
+Forks must define their own `MB_APP_NAME`, `MB_APP_VERSION`, and `MB_APP_CONTACT` before deployment so MusicBrainz receives a deployer-specific User-Agent. This repository intentionally does not ship default values for those fields.
 
 ## Base URL
 
@@ -47,6 +49,12 @@ Search for album release groups.
 ```
 
 **Cache:** 7 days (KV)
+
+**Headers:**
+| Header | Value |
+|--------|-------|
+| `X-Cache` | `HIT` or `MISS` |
+| `Cache-Control` | `public, max-age=86400, stale-while-revalidate=604800` |
 
 ---
 
@@ -129,9 +137,9 @@ Same as above but looks up cover art via the release group MBID.
 | 502    | Upstream MusicBrainz error |
 | 504    | Upstream timeout |
 
-## Rate Limiting
+## Upstream Calls and Rate Limiting
 
-All upstream MusicBrainz calls are globally rate-limited to **1 request per 1.1 seconds** via a Durable Object. Cover Art Archive calls go directly (no rate limit) but are cached for 14 days.
+MusicBrainz requests use the `musicbrainz-api` package and pass through a single Durable Object, which globally rate-limits misses to **1 request per 1.1 seconds** and deduplicates concurrent identical misses. Cover Art Archive requests use the package's Cover Art Archive client directly and are cached for 14 days.
 
 ## TTL Summary
 
