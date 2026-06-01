@@ -41,7 +41,7 @@ For deployment, either add your own `vars` block to `wrangler.jsonc` in your for
 }
 ```
 
-or set equivalent Worker variables in the Cloudflare dashboard. Do not use someone else's contact URL for a public fork.
+or set equivalent Worker variables in the Cloudflare dashboard. `pnpm run deploy` uses `wrangler deploy --keep-vars` so dashboard-managed variables are preserved. Do not use someone else's contact URL for a public fork.
 
 ```txt
 pnpm run cf-typegen
