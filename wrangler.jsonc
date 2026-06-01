@@ -11,7 +11,21 @@
   "kv_namespaces": [
     {
       "binding": "MB_CACHE",
-      "id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+      "id": "b76d00e6ada8484db5f2fbb5b228351f"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MB_RATE_LIMITER",
+        "class_name": "MbRateLimiter"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["MbRateLimiter"]
     }
   ]
 }
