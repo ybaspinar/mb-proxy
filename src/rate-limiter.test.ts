@@ -41,4 +41,33 @@ describe("MbRateLimiter", () => {
     await expect(responses[0].json()).resolves.toEqual({ ok: true });
     await expect(responses[1].json()).resolves.toEqual({ ok: true });
   });
+
+  it("returns a 502 response when the upstream MusicBrainz call fails", async () => {
+    vi.useFakeTimers();
+    const limiter = new MbRateLimiter();
+
+    vi.stubGlobal("fetch", () => {
+      return Promise.reject(new Error("MusicBrainz timeout"));
+    });
+
+    const body = JSON.stringify({
+      operation: {
+        kind: "searchReleaseGroups",
+        query: 'artist:"radiohead"',
+        limit: 12,
+      },
+      timeoutMs: 15000,
+      config: {
+        MB_APP_NAME: "test-app",
+        MB_APP_VERSION: "0.0.0",
+        MB_APP_CONTACT: "https://example.com",
+      },
+    });
+
+    const response = await limiter.fetch(new Request("http://rate-limiter/fetch", { method: "POST", body }));
+    await vi.runAllTimersAsync();
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toEqual({ error: "MusicBrainz timeout" });
+  });
 });

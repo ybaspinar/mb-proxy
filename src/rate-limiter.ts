@@ -83,7 +83,8 @@ export class MbRateLimiter {
           const data = await withTimeout(runMusicBrainzOperation(task.operation, undefined, task.config), task.timeoutMs);
           task.resolve(Response.json(data));
         } catch (err) {
-          task.reject(err);
+          const message = err instanceof Error ? err.message : "MusicBrainz request failed";
+          task.resolve(Response.json({ error: message }, { status: 502 }));
         }
       }
     } finally {

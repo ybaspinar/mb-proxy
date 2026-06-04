@@ -36,6 +36,10 @@ app.use("*", async (c, next) => {
     c.res.headers.set(key, value);
   }
 });
+app.onError((err, c) => {
+  const message = err instanceof Error ? err.message : "Internal server error";
+  return c.json({ error: message }, 502);
+});
 
 app.get("/", (c) => {
   return c.json({ ok: true, service: "mb-proxy", version: "0.2.0" });
@@ -261,7 +265,12 @@ async function fetchWithRateLimit<T>(env: Env, operation: MusicBrainzOperation, 
     body: JSON.stringify({ operation, timeoutMs, config: musicBrainzConfigFromEnv(env) }),
   });
 
-  if (!response.ok) throw new Error(`MusicBrainz error: ${response.status}`);
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    const message = typeof body.error === "string" ? body.error : `MusicBrainz error: ${response.status}`;
+    throw new Error(message);
+  }
+
   return response.json() as Promise<T>;
 }
 
