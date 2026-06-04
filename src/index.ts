@@ -153,9 +153,57 @@ app.get("/release-group/:id/cover", async (c) => {
   return handleCover(c, "release-group");
 });
 
+// GET /image?url=...  — caching image proxy
+app.get("/image", async (c) => {
+  const imageUrl = c.req.query("url");
+  if (!imageUrl) {
+    return c.json({ error: "Missing url parameter" }, 400);
+  }
+
+  let url: URL;
+  try {
+    url = new URL(imageUrl);
+  } catch {
+    return c.json({ error: "Invalid URL" }, 400);
+  }
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return c.json({ error: "Only HTTP/HTTPS URLs allowed" }, 400);
+  }
+
+  const cache = caches.default;
+  const cacheKey = new Request(c.req.url);
+
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const response = await fetch(imageUrl, {
+    headers: { Accept: "image/*" },
+  });
+
+  if (!response.ok) {
+    return c.json({ error: "Image fetch failed" }, 502);
+  }
+
+  const responseToCache = new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: {
+      "Content-Type": response.headers.get("Content-Type") || "image/jpeg",
+      "Cache-Control": "public, max-age=31536000, immutable",
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
+
+  c.executionCtx.waitUntil(cache.put(cacheKey, responseToCache.clone()));
+  return responseToCache;
+});
+
 async function handleCover(
   c: {
-    req: { param: (key: string) => string };
+    req: { param: (key: string) => string; url: string };
     env: Env;
     json: (data: unknown, status?: number) => Response;
   },
@@ -182,11 +230,17 @@ async function handleCover(
 
       const front = caaData.images.find((img) => img.front) ?? caaData.images[0];
 
+      const proxyBase = new URL(c.req.url).origin;
+
       return {
-        artworkUrl: front?.image ?? "",
+        artworkUrl: front?.image ? `${proxyBase}/image?url=${encodeURIComponent(front.image)}` : "",
         thumbnails: {
-          large: front?.thumbnails?.large ?? "",
-          small: front?.thumbnails?.small ?? "",
+          large: front?.thumbnails?.large
+            ? `${proxyBase}/image?url=${encodeURIComponent(front.thumbnails.large)}`
+            : "",
+          small: front?.thumbnails?.small
+            ? `${proxyBase}/image?url=${encodeURIComponent(front.thumbnails.small)}`
+            : "",
         },
       };
     },
